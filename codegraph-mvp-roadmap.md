@@ -842,3 +842,549 @@ Step 11：MVP3：增量、持久化、性能
 6. **Mermaid 优先。** 它最适合 CLI → Markdown → 人/AI 阅读链路。
 7. **MVP2 才引入 AI Context。** 先有 Graph，再让 AI 基于 Graph 理解代码。
 8. **MVP3 才解决大型项目效率。** 增量索引、数据库、watch 都是工程化后置能力。
+
+
+---
+
+## 9. `scan` / `tree` 详细设计
+
+### 9.1 核心关系
+
+```text
+scan 不是给用户“看结果”的命令；
+scan 是建立/刷新 CodeGraph 的命令。
+
+tree 也不应该只是 ls/tree 那种目录结构；
+tree 应该是“代码结构树”：
+  文件夹 / 文件 / module / struct / trait / impl / function / method
+```
+
+也就是说：
+
+```text
+scan = 构建索引
+tree = 查询索引后，以树形方式展示代码结构
+```
+
+---
+
+### 9.2 `scan` 的 MVP1 目标
+
+MVP1 的 `scan` 只做一件事：
+
+> 给定一个 Rust 项目，扫描源码，解析出基础语义结构，构建一个可查询的 CodeGraph。
+
+内部流程：
+
+```text
+code-engine scan .
+  ↓
+Scanner：遍历文件
+  ↓
+Parser：解析 Rust AST
+  ↓
+Symbol Builder：提取符号
+  ↓
+Resolver：解析基础关系
+  ↓
+Graph Builder：生成 CodeGraph
+  ↓
+保存到 .codegraph/graph.json
+```
+
+---
+
+### 9.3 `scan` 参数建议
+
+MVP1 参数要保守，不要一开始做成复杂索引器。
+
+| 参数 | 示例 | MVP1 是否做 | 作用 |
+| --- | --- | --- | --- |
+| `[path]` | `code-engine scan .` | ✅ 必做 | 要扫描的项目路径 |
+| `--lang` | `--lang rust` | ✅ 可做，但默认 rust | 指定语言 |
+| `--include` | `--include "src/**/*.rs"` | ⚠️ 可选 | 指定扫描范围 |
+| `--exclude` | `--exclude "target/**"` | ✅ 建议做 | 额外排除目录/文件 |
+| `--format` | `--format json` | ⚠️ 可选 | 输出扫描摘要格式 |
+| `--output` | `--output .codegraph/graph.json` | ⚠️ 可选 | 保存 Graph 到指定路径 |
+| `--force` | `--force` | ❌ MVP1 可不做 | 强制全量重扫 |
+| `--watch` | `--watch` | ❌ MVP3 | 文件变化自动更新 |
+| `--incremental` | `--incremental` | ❌ MVP3 | 增量扫描 |
+| `--threads` | `--threads 8` | ❌ MVP3 | 并行扫描 |
+| `--follow-symlinks` | `--follow-symlinks` | ❌ 先别做 | 符号链接容易引入路径逃逸 |
+
+推荐第一版命令：
+
+```bash
+code-engine scan .
+code-engine scan ./my-rust-project
+code-engine scan . --exclude "examples/**"
+code-engine scan . --format json
+code-engine scan . --output .codegraph/graph.json
+```
+
+默认行为：
+
+```text
+扫描当前目录
+默认语言：Rust
+默认 include：**/*.rs
+默认 exclude：
+  .git/**
+  target/**
+  node_modules/**
+  dist/**
+  build/**
+  out/**
+  .codegraph/**
+```
+
+---
+
+### 9.4 `scan` 默认输出
+
+默认不要输出巨大 Graph，只输出摘要。
+
+```text
+Scanning project: /path/to/project
+
+Files:
+  Rust files:      42
+  Skipped files:   18
+
+Symbols:
+  Modules:         12
+  Structs:         34
+  Enums:           8
+  Traits:          6
+  Functions:       95
+  Methods:         122
+
+Edges:
+  Contains:        301
+  Imports:         76
+  Calls:           438
+  Implements:      12
+  UsesType:        155
+
+Warnings:
+  Unresolved calls: 37
+  Unsupported macros: 9
+
+Graph built:
+  .codegraph/graph.json
+```
+
+这样用户能立刻知道：
+
+```text
+扫了多少文件
+识别了多少符号
+解析了多少调用
+哪些没解析出来
+Graph 保存在哪里
+```
+
+---
+
+### 9.5 `scan` 内部功能边界
+
+#### 文件扫描
+
+MVP1 必做：
+
+```text
+✅ 遍历项目目录
+✅ 识别 .rs 文件
+✅ 排除 target / .git / node_modules
+✅ 路径规范化
+✅ 防止符号链接逃逸
+✅ 文件读取失败时记录 warning，不要直接崩
+```
+
+MVP1 暂不做：
+
+```text
+❌ Git ignore 完整兼容
+❌ workspace 多 crate 深度分析
+❌ watch
+❌ incremental
+```
+
+#### Rust Parser
+
+建议用 `syn`。
+
+MVP1 至少解析：
+
+```text
+mod
+use
+struct
+enum
+trait
+impl
+fn
+method
+field
+function call
+type path
+```
+
+暂时降级：
+
+```text
+复杂宏
+复杂泛型约束
+动态 dispatch
+proc macro 展开
+条件编译 cfg
+```
+
+降级不是失败，要明确标记：
+
+```text
+Unresolved
+UnsupportedMacro
+ConditionalCompilationSkipped
+```
+
+#### Symbol Builder
+
+MVP1 应该建立这些节点：
+
+```rust
+pub enum NodeKind {
+    File,
+    Module,
+    Struct,
+    Enum,
+    Trait,
+    Function,
+    Method,
+    Field,
+}
+```
+
+每个节点至少要有：
+
+```text
+id
+kind
+name
+qualified_name
+file
+range / line
+```
+
+示例：
+
+```json
+{
+  "id": "node_123",
+  "kind": "Function",
+  "name": "create_user",
+  "qualified_name": "crate::user::service::create_user",
+  "file": "src/user/service.rs",
+  "line": 42
+}
+```
+
+#### Resolver
+
+MVP1 先做基础解析：
+
+```text
+✅ 当前文件内函数调用
+✅ 当前 module 内函数调用
+✅ crate::xxx
+✅ self::xxx
+✅ super::xxx
+✅ use 导入别名
+✅ impl 里的 method 归属
+```
+
+可以不做：
+
+```text
+❌ 跨 crate 完整解析
+❌ 宏展开后的调用
+❌ trait 动态分发
+❌ 泛型单态化
+```
+
+#### Graph Builder
+
+MVP1 至少生成这些边：
+
+```rust
+pub enum EdgeKind {
+    Contains,
+    Defines,
+    Imports,
+    Calls,
+    Implements,
+    UsesType,
+}
+```
+
+其中最重要的是：
+
+```text
+Contains / Defines  → 支撑 tree
+Calls               → 支撑 calls / graph
+Imports             → 支撑基础依赖
+UsesType            → 为 MVP2 Type Graph 铺路
+```
+
+---
+
+### 9.6 `scan` 是否保存结果
+
+MVP1 就应该保存，哪怕很简单。
+
+推荐保存位置：
+
+```text
+.codegraph/graph.json
+```
+
+也可以未来拆成：
+
+```text
+.codegraph/index.json
+.codegraph/nodes.json
+.codegraph/edges.json
+.codegraph/scan-meta.json
+```
+
+但 MVP1 先保持简单：
+
+```text
+.codegraph/graph.json
+```
+
+原因：
+
+```text
+tree / symbols / calls / graph / stats 都应该查询 scan 的结果
+不能每个命令都重新解析代码
+```
+
+---
+
+### 9.7 `tree` 不应该只输出目录结构
+
+如果 `tree` 只输出目录结构，那它和系统自带的 `tree` / `find` / `ls` 区别不大。
+
+你的 `tree` 应该输出：
+
+> 项目结构 + 代码语义结构。
+
+也就是：
+
+```text
+目录
+  文件
+    module
+      struct
+      trait
+      impl
+        method
+      function
+```
+
+---
+
+### 9.8 `tree` MVP1 输出示例
+
+```bash
+code-engine tree
+```
+
+输出：
+
+```text
+my-project
+├── src
+│   ├── main.rs
+│   │   ├── fn main()
+│   │   └── mod user
+│   │
+│   ├── user
+│   │   ├── mod.rs
+│   │   ├── model.rs
+│   │   │   └── struct User
+│   │   │       ├── field id: u64
+│   │   │       └── field name: String
+│   │   │
+│   │   └── service.rs
+│   │       ├── struct UserService
+│   │       └── impl UserService
+│   │           ├── fn new()
+│   │           └── fn create()
+│   │
+│   └── auth.rs
+│       ├── fn login()
+│       └── fn logout()
+└── Cargo.toml
+```
+
+这才是 CodeGraph 产品的价值：
+
+```text
+不是“有哪些文件”
+而是“文件里定义了哪些代码实体”
+```
+
+---
+
+### 9.9 `tree` 参数建议
+
+| 参数 | 示例 | MVP1 是否做 | 作用 |
+| --- | --- | --- | --- |
+| 无参数 | `code-engine tree` | ✅ 必做 | 输出整个项目代码结构 |
+| `[path]` | `code-engine tree src/user` | ✅ 建议做 | 只看某个目录/文件 |
+| `--depth` | `--depth 2` | ✅ 建议做 | 限制输出深度 |
+| `--kind` | `--kind struct` | ⚠️ 可选 | 只看某类节点 |
+| `--show-fields` | `--show-fields` | ⚠️ 可选 | 展示字段 |
+| `--show-private` | `--show-private` | ❌ 可后置 | 是否显示私有符号 |
+| `--format` | `--format json` | ⚠️ 可选 | 输出 JSON |
+| `--no-symbols` | `--no-symbols` | ✅ 建议做 | 只输出文件目录结构 |
+
+推荐第一版命令：
+
+```bash
+code-engine tree
+code-engine tree src/user
+code-engine tree --depth 2
+code-engine tree --no-symbols
+```
+
+---
+
+### 9.10 `tree` 功能边界
+
+MVP1 必做：
+
+```text
+✅ 从 .codegraph/graph.json 读取 Graph
+✅ 按 Contains / Defines 边组织树
+✅ 输出目录 + 文件 + 主要符号
+✅ 支持目录路径过滤
+✅ 支持 depth 限制
+✅ 如果没 scan，提示先运行 code-engine scan .
+```
+
+MVP1 可选：
+
+```text
+⚠️ 输出 JSON
+⚠️ 按 kind 过滤
+⚠️ 显示 struct fields
+⚠️ 显示 impl methods
+```
+
+MVP1 不建议做：
+
+```text
+❌ 交互式展开/折叠
+❌ TUI
+❌ Web UI
+❌ 复杂排序
+❌ 权限/可见性过滤
+```
+
+---
+
+### 9.11 `scan` 和 `tree` 的正确关系
+
+不要这样：
+
+```text
+code-engine tree
+  ↓
+重新扫描项目
+  ↓
+重新解析 AST
+  ↓
+输出 tree
+```
+
+应该这样：
+
+```text
+code-engine scan .
+  ↓
+生成 .codegraph/graph.json
+
+code-engine tree
+  ↓
+读取 .codegraph/graph.json
+  ↓
+查询 Contains / Defines
+  ↓
+输出代码结构树
+```
+
+如果用户没 scan：
+
+```text
+No CodeGraph found.
+Run:
+
+  code-engine scan .
+```
+
+以后可支持便捷参数：
+
+```bash
+code-engine tree --scan
+```
+
+但 MVP1 不一定需要。
+
+---
+
+### 9.12 MVP1 第一批命令体验
+
+```bash
+# 1. 扫描当前 Rust 项目
+code-engine scan .
+
+# 2. 查看代码结构树
+code-engine tree
+
+# 3. 只看某个目录
+code-engine tree src/user
+
+# 4. 限制层级
+code-engine tree --depth 2
+
+# 5. 只看文件目录，不看符号
+code-engine tree --no-symbols
+
+# 6. 查某个符号
+code-engine symbols UserService
+
+# 7. 查调用链
+code-engine calls main
+
+# 8. 输出 Mermaid 图
+code-engine graph main --format mermaid
+
+# 9. 看统计
+code-engine stats
+```
+
+---
+
+### 9.13 本节结论
+
+```text
+scan 是“建图命令”，参数越少越好，先保证 Graph 真实可靠；
+tree 是“代码结构视图”，不只是目录树，而是目录 + 文件 + 符号 + impl/method 的语义树。
+
+MVP1 的关键不是参数多，而是：
+  scan 一次建好 Graph；
+  tree/symbols/calls/graph/stats 全部复用同一个 Graph。
+```
