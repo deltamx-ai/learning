@@ -1,58 +1,79 @@
 import { useState, useEffect, useRef } from "react";
 
-export const useAutoImageHeight = (imageUrl: string, minHeight = 200) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [height, setHeight] = useState<number>(minHeight);
-  const [imgInfo, setImgInfo] = useState<{ ratio: number; naturalHeight: number } | null>(null);
+interface UseDynamicBannerOptions {
+  imageUrl: string;
+  originalWidth: number; // 原图宽 (4095)
+  originalHeight: number; // 原图高 (2894)
+  designWidth: number; // 设计稿宽 (1345)
+  designHeight: number; // 设计稿高 (946)
+  designTop: number; // 设计稿 Top 偏移 (-357)
+  minHeight?: number; // 最小高度限制
+}
 
-  // 1. 获取图片真实比例和物理高度
+export const useDynamicBanner = ({
+  imageUrl,
+  originalWidth,
+  originalHeight,
+  designWidth,
+  designHeight,
+  designTop,
+  minHeight = 200,
+}: UseDynamicBannerOptions) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [layout, setLayout] = useState({
+    height: designHeight,
+    top: designTop,
+  });
+
+  // 1. 获取图片真实比例（避免外部传错）
   useEffect(() => {
-    if (!imageUrl) return;
     const img = new Image();
     img.src = imageUrl;
     img.onload = () => {
-      setImgInfo({
-        ratio: img.naturalWidth / img.naturalHeight,
-        naturalHeight: img.naturalHeight,
-      });
+      // 如果外部传的宽高不准，这里可以强制覆盖逻辑（这里假设外部传的是对的，直接用）
+      console.log("原图真实尺寸:", img.naturalWidth, img.naturalHeight);
     };
   }, [imageUrl]);
 
-  // 2. 监听容器宽度，动态计算高度
+  // 2. 监听容器宽度，动态计算高度和 Top
   useEffect(() => {
     const element = containerRef.current;
-    if (!element || !imgInfo) return;
+    if (!element) return;
 
-    const updateHeight = (width: number) => {
-      // 按比例算出高度
-      let calculatedHeight = width / imgInfo.ratio;
+    const updateLayout = (containerWidth: number) => {
+      // 根据设计稿宽度和原图比例，计算当前应该显示的高度
+      // 注意：这里使用设计稿的宽高比来保证视觉与设计稿一致
+      let targetHeight = (containerWidth / designWidth) * designHeight;
 
-      // 智能限制最大高度：不能超过原图物理高度，也不能超过屏幕高度的 80%
-      const screenLimit = window.innerHeight * 0.8;
-      const maxAllowedHeight = Math.min(imgInfo.naturalHeight, screenLimit);
-
-      // 应用限制
-      if (calculatedHeight > maxAllowedHeight) {
-        calculatedHeight = maxAllowedHeight;
-      }
-      if (calculatedHeight < minHeight) {
-        calculatedHeight = minHeight;
+      // 应用最小高度限制（如果屏幕非常小）
+      if (targetHeight < minHeight) {
+        targetHeight = minHeight;
       }
 
-      setHeight(Math.floor(calculatedHeight));
+      // 核心：根据高度的变化比例，同步计算 Top 的缩放
+      const scale = targetHeight / designHeight;
+      const targetTop = designTop * scale;
+
+      setLayout({
+        height: Math.floor(targetHeight),
+        top: Math.floor(targetTop),
+      });
     };
 
-    updateHeight(element.offsetWidth);
+    // 初始化
+    updateLayout(element.offsetWidth);
 
+    // 监听容器宽度变化
     const resizeObserver = new ResizeObserver((entries) => {
       for (let entry of entries) {
-        updateHeight(entry.contentRect.width);
+        updateLayout(entry.contentRect.width);
       }
     });
+
     resizeObserver.observe(element);
 
     return () => resizeObserver.disconnect();
-  }, [imgInfo, minHeight]);
+  }, [designWidth, designHeight, designTop, minHeight]);
 
-  return { containerRef, height };
+  return { containerRef, ...layout };
 };
