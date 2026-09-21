@@ -1,26 +1,45 @@
 import { useState, useEffect, useRef } from "react";
 
-export const useImageHeightOnLoad = (maxHeight?: number, minHeight?: number) => {
-  const [height, setHeight] = useState<number | "auto">("auto"); // 初始给 auto，让图片自然撑开
-  const [aspectRatio, setAspectRatio] = useState<number | null>(null);
+export const useAutoImageHeight = (imageUrl: string, minHeight = 200) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState<number>(minHeight);
+  const [imgInfo, setImgInfo] = useState<{ ratio: number; naturalHeight: number } | null>(null);
 
-  // 图片加载完成时，获取真实宽高比
-  const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    const img = e.currentTarget;
-    setAspectRatio(img.naturalWidth / img.naturalHeight);
-  };
+  // 1. 获取图片真实比例和物理高度
+  useEffect(() => {
+    if (!imageUrl) return;
+    const img = new Image();
+    img.src = imageUrl;
+    img.onload = () => {
+      setImgInfo({
+        ratio: img.naturalWidth / img.naturalHeight,
+        naturalHeight: img.naturalHeight,
+      });
+    };
+  }, [imageUrl]);
 
-  // 监听容器宽度变化
+  // 2. 监听容器宽度，动态计算高度
   useEffect(() => {
     const element = containerRef.current;
-    if (!element || !aspectRatio) return;
+    if (!element || !imgInfo) return;
 
     const updateHeight = (width: number) => {
-      let h = width / aspectRatio;
-      if (maxHeight && h > maxHeight) h = maxHeight;
-      if (minHeight && h < minHeight) h = minHeight;
-      setHeight(Math.floor(h));
+      // 按比例算出高度
+      let calculatedHeight = width / imgInfo.ratio;
+
+      // 智能限制最大高度：不能超过原图物理高度，也不能超过屏幕高度的 80%
+      const screenLimit = window.innerHeight * 0.8;
+      const maxAllowedHeight = Math.min(imgInfo.naturalHeight, screenLimit);
+
+      // 应用限制
+      if (calculatedHeight > maxAllowedHeight) {
+        calculatedHeight = maxAllowedHeight;
+      }
+      if (calculatedHeight < minHeight) {
+        calculatedHeight = minHeight;
+      }
+
+      setHeight(Math.floor(calculatedHeight));
     };
 
     updateHeight(element.offsetWidth);
@@ -33,7 +52,7 @@ export const useImageHeightOnLoad = (maxHeight?: number, minHeight?: number) => 
     resizeObserver.observe(element);
 
     return () => resizeObserver.disconnect();
-  }, [aspectRatio, maxHeight, minHeight]);
+  }, [imgInfo, minHeight]);
 
-  return { containerRef, height, handleImageLoad };
+  return { containerRef, height };
 };
