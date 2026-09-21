@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Banner 自适应展示</title>
+    <style>
+        /* 1. 清除浏览器默认的边距 */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        /* 2. 外层容器：高度固定 200px，宽度铺满屏幕 */
+        .banner {
+            width: 100%;
+            height: 200px;       /* 高度死死锁住 200px */
+            overflow: hidden;    /* 超出部分裁切 */
+            position: relative;
+            background-color: #f0f0f0; /* 兜底色，防止网络慢图片没加载出来时露白 */
+        }
+
+        /* 3. 图片层：自适应宽高，保持比例，居中焦点 */
+        .banner img {
+            width: 100%;
+            height: 100%;
+            /* 核心：保持比例放大铺满容器，多余部分自动裁切 */
+            object-fit: cover;
+            /* 核心：控制焦点。你可以改成 '40% center' 或 'center 30%' 来微调视野 */
+            object-position: center center;
+            display: block; /* 消除图片底部的微小空隙 */
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 你的 Banner 容器 -->
+    <div class="banner">
+        <!-- 
+            注意：请把 src 里的地址换成你自己裁切好的那张图（比如 2400x600 的图）。
+            这里用了一个开源的高清宽幅风景图作为演示，你可以直接看到效果。
+        -->
+        <img 
+            src="https://picsum.photos/1920/600?random=1" 
+            alt="Banner 展示"
+        >
+    </div>
+
+</body>
+</html>
