@@ -1,28 +1,24 @@
 import { useState, useEffect, useRef } from "react";
 
-interface UseDynamicBannerOptions {
-  imageUrl: string;
+interface UseResponsiveBannerOptions {
   originalWidth: number; // 原图宽 (4095)
   originalHeight: number; // 原图高 (2894)
-  designWidth: number; // 设计稿宽 (1345)
-  designHeight: number; // 设计稿高 (946)
-  designTop: number; // 设计稿 Top 偏移 (-357)
   minHeight?: number; // 最小高度限制
 }
 
-export const useDynamicBanner = ({
-  imageUrl,
+// 定义设计稿的两个锚点
+const POINT_MOBILE = { width: 335, height: 690, top: -235 };
+const POINT_DESKTOP = { width: 1120, height: 946, top: -357 };
+
+export const useResponsiveBanner = ({
   originalWidth,
   originalHeight,
-  designWidth,
-  designHeight,
-  designTop,
   minHeight = 200,
-}: UseDynamicBannerOptions) => {
+}: UseResponsiveBannerOptions) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [layout, setLayout] = useState({
-    height: designHeight,
-    top: designTop,
+    height: 0,
+    top: 0,
   });
 
   useEffect(() => {
@@ -30,22 +26,32 @@ export const useDynamicBanner = ({
     if (!element) return;
 
     const updateLayout = (containerWidth: number) => {
-      // 1. 计算当前高度
-      // 注意：这里严格使用原图比例(originalWidth / originalHeight)，
-      // 避免因为设计稿比例(1345/946)和原图比例(4095/2894)不一致导致图片变形。
-      const ratio = originalWidth / originalHeight;
-      let targetHeight = containerWidth / ratio;
+      let targetHeight = 0;
+      let targetTop = 0;
 
-      // 应用最小高度限制
+      // 1. 根据屏幕宽度，选择计算策略
+      if (containerWidth <= POINT_MOBILE.width) {
+        // 极小屏：小于等于 335px，直接用小屏数据
+        targetHeight = POINT_MOBILE.height;
+        targetTop = POINT_MOBILE.top;
+      } else if (containerWidth >= POINT_DESKTOP.width) {
+        // 大屏：大于等于 1120px，直接用大屏数据
+        targetHeight = POINT_DESKTOP.height;
+        targetTop = POINT_DESKTOP.top;
+      } else {
+        // 中间区域：335px ~ 1120px 之间，使用线性插值
+        const t =
+          (containerWidth - POINT_MOBILE.width) / (POINT_DESKTOP.width - POINT_MOBILE.width);
+
+        // 计算高度和 Top
+        targetHeight = POINT_MOBILE.height + t * (POINT_DESKTOP.height - POINT_MOBILE.height);
+        targetTop = POINT_MOBILE.top + t * (POINT_DESKTOP.top - POINT_MOBILE.top);
+      }
+
+      // 2. 应用最小高度限制（防止特殊小屏导致异常）
       if (targetHeight < minHeight) {
         targetHeight = minHeight;
       }
-
-      // 2. 核心：按高度差计算 Top
-      // 公式：Top = 设计稿Top + (设计稿高度 - 当前高度)
-      // 推导：设计稿底部位置 = designTop + designHeight = -357 + 946 = 589
-      // 当前 Top = 589 - targetHeight
-      const targetTop = designTop + designHeight - targetHeight;
 
       setLayout({
         height: Math.floor(targetHeight),
@@ -53,20 +59,17 @@ export const useDynamicBanner = ({
       });
     };
 
-    // 初始化
     updateLayout(element.offsetWidth);
 
-    // 监听容器宽度变化
     const resizeObserver = new ResizeObserver((entries) => {
       for (let entry of entries) {
         updateLayout(entry.contentRect.width);
       }
     });
-
     resizeObserver.observe(element);
 
     return () => resizeObserver.disconnect();
-  }, [originalWidth, originalHeight, designWidth, designHeight, designTop, minHeight]);
+  }, [originalWidth, originalHeight, minHeight]);
 
   return { containerRef, ...layout };
 };
