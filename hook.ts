@@ -1,62 +1,39 @@
 import { useState, useEffect, useRef } from "react";
 
-interface UseImageHeightOptions {
-  originalWidth: number;
-  originalHeight: number;
-  maxHeight?: number; // 可选：限制最大高度，防止在大屏上无限变大
-  minHeight?: number; // 可选：限制最小高度
-}
-
-export const useImageHeight = ({
-  originalWidth,
-  originalHeight,
-  maxHeight,
-  minHeight,
-}: UseImageHeightOptions) => {
+export const useImageHeightOnLoad = (maxHeight?: number, minHeight?: number) => {
+  const [height, setHeight] = useState<number | "auto">("auto"); // 初始给 auto，让图片自然撑开
+  const [aspectRatio, setAspectRatio] = useState<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [height, setHeight] = useState<number>(0);
 
+  // 图片加载完成时，获取真实宽高比
+  const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget;
+    setAspectRatio(img.naturalWidth / img.naturalHeight);
+  };
+
+  // 监听容器宽度变化
   useEffect(() => {
     const element = containerRef.current;
-    if (!element) return;
-
-    // 计算宽高比
-    const aspectRatio = originalWidth / originalHeight;
+    if (!element || !aspectRatio) return;
 
     const updateHeight = (width: number) => {
-      // 核心公式：高度 = 宽度 / 宽高比
-      let calculatedHeight = width / aspectRatio;
-
-      // 应用最大最小高度限制（如果有）
-      if (maxHeight && calculatedHeight > maxHeight) {
-        calculatedHeight = maxHeight;
-      }
-      if (minHeight && calculatedHeight < minHeight) {
-        calculatedHeight = minHeight;
-      }
-
-      setHeight(Math.floor(calculatedHeight)); // 取整避免亚像素渲染问题
+      let h = width / aspectRatio;
+      if (maxHeight && h > maxHeight) h = maxHeight;
+      if (minHeight && h < minHeight) h = minHeight;
+      setHeight(Math.floor(h));
     };
 
-    // 初始化计算
     updateHeight(element.offsetWidth);
 
-    // 使用 ResizeObserver 监听容器宽度变化
     const resizeObserver = new ResizeObserver((entries) => {
       for (let entry of entries) {
-        // 获取容器的实际宽度（不包含 padding）
-        const width = entry.contentRect.width;
-        updateHeight(width);
+        updateHeight(entry.contentRect.width);
       }
     });
-
     resizeObserver.observe(element);
 
-    // 清理监听
-    return () => {
-      resizeObserver.disconnect();
-    };
-  }, [originalWidth, originalHeight, maxHeight, minHeight]);
+    return () => resizeObserver.disconnect();
+  }, [aspectRatio, maxHeight, minHeight]);
 
-  return { containerRef, height };
+  return { containerRef, height, handleImageLoad };
 };
