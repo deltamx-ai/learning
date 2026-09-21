@@ -25,34 +25,27 @@ export const useDynamicBanner = ({
     top: designTop,
   });
 
-  // 1. 获取图片真实比例（避免外部传错）
-  useEffect(() => {
-    const img = new Image();
-    img.src = imageUrl;
-    img.onload = () => {
-      // 如果外部传的宽高不准，这里可以强制覆盖逻辑（这里假设外部传的是对的，直接用）
-      console.log("原图真实尺寸:", img.naturalWidth, img.naturalHeight);
-    };
-  }, [imageUrl]);
-
-  // 2. 监听容器宽度，动态计算高度和 Top
   useEffect(() => {
     const element = containerRef.current;
     if (!element) return;
 
     const updateLayout = (containerWidth: number) => {
-      // 根据设计稿宽度和原图比例，计算当前应该显示的高度
-      // 注意：这里使用设计稿的宽高比来保证视觉与设计稿一致
-      let targetHeight = (containerWidth / designWidth) * designHeight;
+      // 1. 计算当前高度
+      // 注意：这里严格使用原图比例(originalWidth / originalHeight)，
+      // 避免因为设计稿比例(1345/946)和原图比例(4095/2894)不一致导致图片变形。
+      const ratio = originalWidth / originalHeight;
+      let targetHeight = containerWidth / ratio;
 
-      // 应用最小高度限制（如果屏幕非常小）
+      // 应用最小高度限制
       if (targetHeight < minHeight) {
         targetHeight = minHeight;
       }
 
-      // 核心：根据高度的变化比例，同步计算 Top 的缩放
-      const scale = targetHeight / designHeight;
-      const targetTop = designTop * scale;
+      // 2. 核心：按高度差计算 Top
+      // 公式：Top = 设计稿Top + (设计稿高度 - 当前高度)
+      // 推导：设计稿底部位置 = designTop + designHeight = -357 + 946 = 589
+      // 当前 Top = 589 - targetHeight
+      const targetTop = designTop + designHeight - targetHeight;
 
       setLayout({
         height: Math.floor(targetHeight),
@@ -73,7 +66,7 @@ export const useDynamicBanner = ({
     resizeObserver.observe(element);
 
     return () => resizeObserver.disconnect();
-  }, [designWidth, designHeight, designTop, minHeight]);
+  }, [originalWidth, originalHeight, designWidth, designHeight, designTop, minHeight]);
 
   return { containerRef, ...layout };
 };
